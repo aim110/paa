@@ -3,6 +3,7 @@ import yfinance  # kinda docs: https://pypi.org/project/yfinance/
 import pandas as pd  # https://pandas.pydata.org/docs/index.html
 pd.options.mode.chained_assignment = None  # default='warn' to make my excessive data copying sleep well
 
+import argparse
 from datetime import date
 
 
@@ -52,10 +53,19 @@ def print_sorted_mom_filtered(tickers, all_momentum_sorted):
         print("{}: {}".format(t, m))
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--amount', type=int, help="calculate shares according to that amount of money")
+    args = parser.parse_args()
+    return args
+
+
 def main():
+    args = parse_args()
+
     risky = set(['SPY', 'IWM', 'QQQ', 'VGK', 'EWJ', 'EEM', 'VNQ', 'DBC', 'GLD', 'HYG', 'LQD', 'TLT']) # NB: SCZ looks quite interesting!!!
     canary = set(['AGG', 'EEM'])
-    safe = set(['IEF', 'SHY', 'LQD', 'TIPS', 'VGSH'])
+    safe = set(['IEF', 'SHY', 'LQD', 'TIPS', 'VGSH', 'STIP', 'VCSH', 'IAGG'])
 
     all_tickers = {*risky, *canary, *safe}
     df = fetch_all_ticker_data(all_tickers)
@@ -95,8 +105,12 @@ def main():
     bf = BF(N, positive_momentum_assets, A)
     risky_asset_share = (1.0 - bf) / TOP
     print("\nShare of each risky asset: ", round(risky_asset_share, 2))
+    if args.amount:
+        print("Buy each asset on: {}$".format(round(args.amount * risky_asset_share, 1)))
 
     print("\nBond fraction: ", round(bf, 2))
+    if args.amount:
+        print("Buy best safe asset on: {}$".format(round(args.amount * bf, 1)))
 
     print("\nSafe assets momentum:")
     print_sorted_mom_filtered(safe, sorted_mom)

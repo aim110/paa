@@ -65,9 +65,10 @@ def main():
 
     risky = set(['SPY', 'IWM', 'QQQ', 'VGK', 'EWJ', 'EEM', 'VNQ', 'DBC', 'GLD', 'HYG', 'LQD', 'TLT']) # NB: SCZ looks quite interesting!!!
     canary = set(['AGG', 'EEM'])
+    iamcurious = set('EFV RWO IWN SCZ EFA IVE XLE'.split()) # TBD: move to separate script for wondering
     safe = set(['IEF', 'SHY', 'LQD', 'TIPS', 'VGSH', 'STIP', 'VCSH', 'IAGG'])
 
-    all_tickers = {*risky, *canary, *safe}
+    all_tickers = {*risky, *canary, *safe, *iamcurious}
     df = fetch_all_ticker_data(all_tickers)
 
     # PAA1 strategy:

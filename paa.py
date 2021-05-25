@@ -63,28 +63,31 @@ def parse_args():
 def main():
     args = parse_args()
 
-    risky = set(['SPY', 'IWM', 'QQQ', 'VGK', 'EWJ', 'EEM', 'VNQ', 'DBC', 'GLD', 'HYG', 'LQD', 'TLT']) # NB: SCZ looks quite interesting!!!
+    paa_risky = set(['SPY', 'IWM', 'QQQ', 'VGK', 'EWJ', 'EEM', 'VNQ', 'DBC', 'GLD', 'HYG', 'LQD', 'TLT']) # NB: SCZ looks quite interesting!!!
     canary = set(['AGG', 'EEM'])
-    iamcurious = set('EFV RWO IWN SCZ EFA IVE XLE'.split()) # TBD: move to separate script for wondering
+    iamcurious = set('EFV RWO IWN SCZ EFA IVE'.split()) # TBD: move to separate script for wondering
+    sectoral = set('VAW VOX VDE VFH VIS VGT VDC VNQ VPU VHT VCR'.split())  # energy communcation energy finance industrials tech staples realEstate utilities healthcare discretionary
     safe = set(['IEF', 'SHY', 'LQD', 'TIPS', 'VGSH', 'STIP', 'VCSH', 'IAGG'])
 
-    all_tickers = {*risky, *canary, *safe, *iamcurious}
+    all_tickers = {*paa_risky, *canary, *safe, *iamcurious, *sectoral}
     df = fetch_all_ticker_data(all_tickers)
 
     # PAA1 strategy:
     L = 12  # Lookback length (month)
     A = 1   # Protection range (0: low, 1: medium, 2: high)
-    N = len(risky)  # Universum
+    N = len(paa_risky)  # Universum
     TOP = 6  # Number of assets in rotation
     # Paper strategy comparison: page 9
 
     ticker_mom = {}
+    ticker_last_price = {}
     for t in all_tickers:
         ticker_data = df[t].copy(deep=True)
         cleaned_data = cleanup_ticker_data(ticker_data, L)
 
         sma = SMA(cleaned_data, L)  # TBD: not sure if I am doing that correctly. Do I need 13 points for SMA12? Should I include p0 to SMA calculation?
         last_price = cleaned_data.tail(1).iloc[0]["Close"]
+        ticker_last_price[t] = last_price
 
         momentum = MOM(last_price, sma)
         ticker_mom[t] = momentum
@@ -94,20 +97,25 @@ def main():
     print_sorted_mom_tickers(sorted_mom)
 
     positive_momentum_assets = 0
-    for t in risky:
+    for t in paa_risky:
         if ticker_mom[t] > 0:
             positive_momentum_assets += 1
-    print("\nPositive momentum cnt for risky: ", positive_momentum_assets)
+    print("\nPositive momentum cnt for paa risky: ", positive_momentum_assets)
 
-    top = [(t,m) for t, m in sorted_mom if m > 0 and t in risky][-TOP:]
-    print("\nTop:")
+    top = [(t,m) for t, m in sorted_mom if m > 0 and t in paa_risky][-TOP:]
+    print("\nTop risky assets for PAA:")
     print_sorted_mom_tickers(top)
 
     bf = BF(N, positive_momentum_assets, A)
     risky_asset_share = (1.0 - bf) / TOP
     print("\nShare of each risky asset: ", round(risky_asset_share, 2))
     if args.amount:
-        print("Buy each asset on: {}$".format(round(args.amount * risky_asset_share, 1)))
+        asset_value = round(args.amount * risky_asset_share, 1)
+        print("Buy each asset on: {}$. Shares for equites:".format(asset_value))
+        for t, _ in top:
+            price = round(ticker_last_price[t], 1)
+            shares_amount = round(asset_value / price, 1)
+            print("\t`{}`: {}\tprice={}".format(t, shares_amount, price))
 
     print("\nBond fraction: ", round(bf, 2))
     if args.amount:

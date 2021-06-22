@@ -27,6 +27,16 @@ def fetch_all_ticker_data(tickers):
     return yf.download(tickers, start=str(start), end=str(today), interval='1mo', group_by='ticker')
 
 
+def get_ticker_info(t):
+    return yf.Ticker(t).info
+
+
+def get_last_prices(tickers_list):
+    data = yf.download(tickers=tickers_list, period='2h', interval='5m')
+    tail = data.dropna().tail(1)["Close"]
+    return {ticker: tail[ticker][0] for ticker in tail}
+
+
 def cleanup_ticker_data(d, lookback):
     d = d.dropna()
     d["Day"] = d.index
@@ -56,23 +66,14 @@ def print_sorted_mom_filtered(tickers, all_momentum_sorted):
         print("{}: {}".format(t, m))
 
 
-def get_last_prices(tickers_list):
-    data = yf.download(tickers=tickers_list, period='2h', interval='5m')
-    tail = data.dropna().tail(1)["Close"]
-    return {ticker: tail[ticker][0] for ticker in tail}
-
-
 def read_ticker_state(fn):
     return pd.read_csv(fn, header=None, names=["ticker", "amount"], index_col="ticker")
 
 
-def prepare_orders(ticker_current, target_tickers, ticker_to_sum):
+def prepare_orders(ticker_current, target_tickers, ticker_to_sum, ticker_to_last_price):
     """
     orders to buy and to sell
     """
-    all_tickers = set(ticker_current.index) | set(target_tickers) 
-    last_price = get_last_prices(all_tickers)
-    #print("LP: {}".format(last_price))
 
     orders = []
     # BUY PART
@@ -82,7 +83,7 @@ def prepare_orders(ticker_current, target_tickers, ticker_to_sum):
             current_shares = ticker_current.at[ticker, "amount"]
         except KeyError:
             current_shares = 0
-        target_shares = ticker_to_sum[ticker] / last_price[ticker]
+        target_shares = ticker_to_sum[ticker] / ticker_to_last_price[ticker]
         #print("curr: {}\ttarget_shares: {}".format(current_shares, target_shares))
 
         amount = target_shares - current_shares 
@@ -93,7 +94,6 @@ def prepare_orders(ticker_current, target_tickers, ticker_to_sum):
     to_sell = set(ticker_current.index) - set(target_tickers)
     for t in to_sell:
         orders.append(('sell', t, 'all'))
-
 
     return orders
 
@@ -168,16 +168,17 @@ def main():
     if args.amount:
         risky_top = [t for t, _ in top]
         targets = {**{top_safe: safe_target}, **{t: risky_target for t in risky_top}}
+        last_price = get_last_prices(all_tickers)
 
-        orders = prepare_orders(read_ticker_state(args.current_fn), [top_safe] + risky_top, targets)
+        orders = prepare_orders(read_ticker_state(args.current_fn), [top_safe] + risky_top, targets, last_price)
+        ticker_info = yf.Tickers(' '.join(all_tickers))
+        get_info = lambda x: ticker_info.tickers[x].info["longName"]
 
         for ot, ticker, amount in sorted(orders, key=lambda x: x[0]):
             val = round(amount, 1) if type(amount) != str else amount
-            print("\t{}\t{}\t{}".format(ot.upper(), ticker, val))
+            print("\t{}\t{}\t{}\t{}".format(ot.upper(), ticker, get_info(ticker), val))
 
 
-
-# TBD: add descr for ticker at `buy` section yf.Ticker("VAW").info["longName"]
 # TBD: move to args `risky assets`, `save assets` (or to yaml config)
 if __name__ == '__main__':
     main()

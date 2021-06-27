@@ -32,7 +32,7 @@ def get_ticker_info(t):
 
 
 def get_last_prices(tickers_list):
-    data = yf.download(tickers=tickers_list, period='2h', interval='5m')
+    data = yf.download(tickers=tickers_list, period='3d', interval='5m')  # 3d - in case of weekend launch
     tail = data.dropna().tail(1)["Close"]
     return {ticker: tail[ticker][0] for ticker in tail}
 
@@ -102,6 +102,9 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--amount', type=int, help="calculate shares according to that amount of money", required=True)
     parser.add_argument('--current_fn', type=str, help="csv files with current positions", required=True)
+    parser.add_argument("--risky", action="extend", nargs="+", type=str, required=True)
+    parser.add_argument("--safe", action="extend", nargs="+", type=str, required=True)
+    parser.add_argument("--protection_range", choices=[0, 1, 2], type=int, required=True)
     args = parser.parse_args()
     return args
 
@@ -109,46 +112,47 @@ def parse_args():
 def main():
     args = parse_args()
 
-    paa_risky = set(['VTI', 'IWM', 'QQQ', 'VGK', 'EWJ', 'EEM', 'VNQ', 'DBC', 'GLD', 'HYG', 'LQD', 'TLT']) # NB: SPY - original, I got VTI instead
-    canary = set(['AGG', 'EEM'])
-    iamcurious = set('EFV RWO IWN SCZ EFA IVE'.split()) # TBD: move to separate script for wondering
-    sectoral = set('VAW VOX XLE VFH VIS VGT VDC VNQ VPU VHT VCR'.split())  # energy communcation energy finance industrials tech staples realEstate utilities healthcare discretionary
-    # is VDE better than XLE?
-    safe = set(['IEF', 'SHY', 'LQD', 'TIP', 'VGSH', 'VCSH', 'IAGG', "STIP"]) # STIP
+    risky = set(args.risky)
+    safe = set(args.safe)
+    curr_ticker_state = read_ticker_state(args.current_fn)
+    curr = set(curr_ticker_state.index)
 
-    all_tickers = {*paa_risky, *canary, *safe, *iamcurious, *sectoral}
+    all_tickers = {*risky, *safe, *curr}
     df = fetch_all_ticker_data(all_tickers)
 
     # PAA1 strategy:
     L = 12  # Lookback length (month)
-    A = 1   # Protection range (0: low, 1: medium, 2: high)
-    N = len(paa_risky)  # Universum
+    A = args.protection_range   # Protection range (0: low, 1: medium, 2: high)
+    N = len(risky)  # Universum
     TOP = 6  # Number of assets in rotation
     # Paper strategy comparison: page 9
 
     ticker_mom = {}
     for t in all_tickers:
-        ticker_data = df[t].copy(deep=True)
-        cleaned_data = cleanup_ticker_data(ticker_data, L)
+        try:
+            ticker_data = df[t].copy(deep=True)
+            cleaned_data = cleanup_ticker_data(ticker_data, L)
 
-        sma = SMA(cleaned_data, L)  # TBD: not sure if I am doing that correctly. Do I need 13 points for SMA12? Should I include p0 to SMA calculation?
-        last_price = cleaned_data.tail(1).iloc[0]["Close"]
-        momentum = MOM(last_price, sma)
-        ticker_mom[t] = momentum
+            sma = SMA(cleaned_data, L)  # TBD: not sure if I am doing that correctly. Do I need 13 points for SMA12? Should I include p0 to SMA calculation?
+            last_price = cleaned_data.tail(1).iloc[0]["Close"]
+            momentum = MOM(last_price, sma)
+            ticker_mom[t] = momentum
+        except Exception as e:
+            print("ERR processing ticket '{}'\n{}".format(t, e))
 
     sorted_mom = sorted(ticker_mom.items(), key=lambda x: x[1])
     print("\nAll tickers momentum:")
     for t, mom in sorted_mom:
-        extra = ' ' if t not in paa_risky else '*'
+        extra = ' ' if t not in risky else '*'
         print("{} {}: {}".format(extra, t, mom))
 
     positive_momentum_assets = 0
-    for t in paa_risky:
+    for t in risky:
         if ticker_mom[t] > 0:
             positive_momentum_assets += 1
     print("\nPositive momentum cnt for paa risky: ", positive_momentum_assets)
 
-    top = [(t,m) for t, m in sorted_mom if m > 0 and t in paa_risky][-TOP:]
+    top = [(t,m) for t, m in sorted_mom if m > 0 and t in risky][-TOP:]
     print("\nTop risky assets for PAA:")
     print_sorted_mom_tickers(top)
 
@@ -170,15 +174,15 @@ def main():
         targets = {**{top_safe: safe_target}, **{t: risky_target for t in risky_top}}
         last_price = get_last_prices(all_tickers)
 
-        orders = prepare_orders(read_ticker_state(args.current_fn), [top_safe] + risky_top, targets, last_price)
+        orders = prepare_orders(curr_ticker_state, [top_safe] + risky_top, targets, last_price)
         ticker_info = yf.Tickers(' '.join(all_tickers))
         get_info = lambda x: ticker_info.tickers[x].info["longName"]
 
         for ot, ticker, amount in sorted(orders, key=lambda x: x[0]):
             val = round(amount, 1) if type(amount) != str else amount
-            print("\t{}\t{}\t{}\t{}".format(ot.upper(), ticker, get_info(ticker), val))
+            print("\t{}\t{}\t{}\t{}".format(ot.upper(), ticker, val, get_info(ticker)))
 
 
-# TBD: move to args `risky assets`, `save assets` (or to yaml config)
+# TBD: check if SMA is working properly - check using TradingView or other financial charts
 if __name__ == '__main__':
     main()

@@ -5,6 +5,7 @@ pd.options.mode.chained_assignment = None  # default='warn' to make my excessive
 
 import argparse
 from datetime import date
+from collections import defaultdict
 
 
 def MOM(last_price, sma):
@@ -70,12 +71,13 @@ def read_ticker_state(fn):
     return pd.read_csv(fn, header=None, names=["ticker", "amount"], index_col="ticker")
 
 
-def prepare_orders(ticker_current, target_tickers, ticker_to_sum, ticker_to_last_price):
+def prepare_orders(ticker_current, ticker_to_sum, ticker_to_last_price):
     """
     orders to buy and to sell
     """
 
     orders = []
+    target_tickers = ticker_to_sum.keys()
     # BUY PART
     for ticker in target_tickers:
         #print("Ticker: {}".format(ticker))
@@ -105,6 +107,7 @@ def parse_args():
     parser.add_argument("--risky", action="extend", nargs="+", type=str, required=True)
     parser.add_argument("--safe", action="extend", nargs="+", type=str, required=True)
     parser.add_argument("--protection_range", choices=[0, 1, 2], type=int, required=True)
+    parser.add_argument("--debug", action='store_true', default=False, required=False)
     args = parser.parse_args()
     return args
 
@@ -158,10 +161,10 @@ def main():
 
     bf = BF(N, positive_momentum_assets, A)
     risky_asset_share = (1.0 - bf) / TOP
-    print("\nShare of each risky asset: ", round(risky_asset_share, 2))
+    print("\nShare of each risky asset: ", round(risky_asset_share, 3))
     risky_target = round(args.amount * risky_asset_share, 1)
 
-    print("\nBond fraction: ", round(bf, 2))
+    print("\nBond fraction: ", round(bf, 3))
 
     print("\nSafe assets momentum:")
     print_sorted_mom_filtered(safe, sorted_mom)
@@ -171,10 +174,20 @@ def main():
 
     if args.amount:
         risky_top = [t for t, _ in top]
-        targets = {**{top_safe: safe_target}, **{t: risky_target for t in risky_top}}
+        #targets = {**{top_safe: safe_target}, **{t: risky_target for t in risky_top}}
+        targets = defaultdict(int)
+        for t in risky_top:
+            targets[t] += risky_target
+        targets[top_safe] += safe_target
         last_price = get_last_prices(all_tickers)
+        
+        if args.debug:
+            print("Ticker prices: ")
+            for ticker, price in sorted(last_price.items(), key=lambda x: x[0]):
+                print("\t{}\t{}".format(ticker, price))
+            print("--\n")
 
-        orders = prepare_orders(curr_ticker_state, [top_safe] + risky_top, targets, last_price)
+        orders = prepare_orders(curr_ticker_state, targets, last_price)
         ticker_info = yf.Tickers(' '.join(all_tickers))
         get_info = lambda x: ticker_info.tickers[x].info["longName"]
 

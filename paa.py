@@ -15,6 +15,7 @@ def MOM(last_price, sma):
 def SMA(ticker_cleaned, L=12):
     """ wma: https://en.wikipedia.org/wiki/Moving_average#Weighted_moving_average """
     weighted = pd.DataFrame({'Price': ticker_cleaned.dropna()["Close"], 'Weight': range(L)}, index=ticker_cleaned.index)
+    print(weighted)
     return sum(weighted["Weight"] * weighted["Price"]) / sum(weighted["Weight"])
 
 
@@ -25,7 +26,7 @@ def get_month(row):
 def fetch_all_ticker_data(tickers):
     today = date.today()
     start = date(year = today.year - 1, month = today.month - 1, day = 1)
-    return yf.download(tickers, start=str(start), end=str(today), interval='1mo', group_by='ticker')
+    return yf.download(tickers, start=str(start), end=str(today), interval='1d', group_by='ticker')
 
 
 def get_ticker_info(t):
@@ -43,8 +44,9 @@ def cleanup_ticker_data(d, lookback):
     d["Day"] = d.index
     d["Mo"] = d.apply(get_month, axis=1)
     # leave 1 record per month and take a last one
+    # TBD: last? not first?
 
-    d = d.sort_values("Day").drop_duplicates(['Mo'], keep='last')
+    d = d.sort_values("Day").drop_duplicates(['Mo'], keep='first')
     d = d.drop(["Mo", "High", "Low", "Adj Close", "Volume"], axis=1)
     return d.tail(lookback)
 
@@ -100,6 +102,7 @@ def prepare_orders(ticker_current, ticker_to_sum, ticker_to_last_price):
     return orders
 
 
+# TBD: use logging module and log downloaded ticker data, dates, etc.
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--amount', type=int, help="calculate shares according to that amount of money", required=True)
@@ -112,6 +115,9 @@ def parse_args():
     return args
 
 
+# stage1: download and cleanup data
+# stage2: implement PAA algo
+# stage3: calc buy/sell orders
 def main():
     args = parse_args()
 
@@ -124,7 +130,7 @@ def main():
     df = fetch_all_ticker_data(all_tickers)
 
     # PAA1 strategy:
-    L = 12  # Lookback length (month)
+    L = 13  # Lookback length (month)
     A = args.protection_range   # Protection range (0: low, 1: medium, 2: high)
     N = len(risky)  # Universum
     TOP = 6  # Number of assets in rotation
@@ -137,6 +143,7 @@ def main():
             cleaned_data = cleanup_ticker_data(ticker_data, L)
 
             sma = SMA(cleaned_data, L)  # TBD: not sure if I am doing that correctly. Do I need 13 points for SMA12? Should I include p0 to SMA calculation?
+            print("{} : sma {}\n{}".format(t, sma, cleaned_data))
             last_price = cleaned_data.tail(1).iloc[0]["Close"]
             momentum = MOM(last_price, sma)
             ticker_mom[t] = momentum

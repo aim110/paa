@@ -25,7 +25,10 @@ def get_month(row):
 
 def fetch_all_ticker_data(tickers):
     today = date.today()
-    start = date(year = today.year - 1, month = today.month - 1, day = 1)
+    if today.month == 1:
+        start = date(year = today.year - 2, month = 12, day = 1)
+    else:
+        start = date(year = today.year - 1, month = today.month - 1, day = 1)
     return yf.download(tickers, start=str(start), end=str(today), interval='1d', group_by='ticker')
 
 

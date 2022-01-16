@@ -12,9 +12,14 @@ def MOM(last_price, sma):
     return last_price/sma - 1
 
 
-def SMA(ticker_cleaned, L=12):
+def SMA(ticker_cleaned, L=12, ma_type='linear'):
     """ wma: https://en.wikipedia.org/wiki/Moving_average#Weighted_moving_average """
-    weighted = pd.DataFrame({'Price': ticker_cleaned.dropna()["Close"], 'Weight': range(L)}, index=ticker_cleaned.index)
+    if ma_type == 'avg':
+        weighted = pd.DataFrame({'Price': ticker_cleaned.dropna()["Close"], 'Weight': [1] * L}, index=ticker_cleaned.index)
+
+    if ma_type == 'linear':
+        weighted = pd.DataFrame({'Price': ticker_cleaned.dropna()["Close"], 'Weight': range(1, L+1)}, index=ticker_cleaned.index)
+
     print(weighted)
     return sum(weighted["Weight"] * weighted["Price"]) / sum(weighted["Weight"])
 
@@ -29,7 +34,8 @@ def fetch_all_ticker_data(tickers):
         start = date(year = today.year - 2, month = 12, day = 1)
     else:
         start = date(year = today.year - 1, month = today.month - 1, day = 1)
-    return yf.download(tickers, start=str(start), end=str(today), interval='1d', group_by='ticker')
+    end = date(year=today.year, month=today.month, day = 1)
+    return yf.download(tickers, start=str(start), end=str(end), interval='1d', group_by='ticker', auto_adjust = True)
 
 
 def get_ticker_info(t):
@@ -46,11 +52,9 @@ def cleanup_ticker_data(d, lookback):
     d = d.dropna()
     d["Day"] = d.index
     d["Mo"] = d.apply(get_month, axis=1)
-    # leave 1 record per month and take a last one
-    # TBD: last? not first?
 
-    d = d.sort_values("Day").drop_duplicates(['Mo'], keep='first')
-    d = d.drop(["Mo", "High", "Low", "Adj Close", "Volume"], axis=1)
+    d = d.sort_values("Day").drop_duplicates(['Mo'], keep='last')
+    d = d.drop(["Mo", "Open", "High", "Low", "Volume"], axis=1)
     return d.tail(lookback)
 
 
@@ -114,6 +118,7 @@ def parse_args():
     parser.add_argument("--safe", action="extend", nargs="+", type=str, required=True)
     parser.add_argument("--protection_range", choices=[0, 1, 2], type=int, required=True)
     parser.add_argument("--debug", action='store_true', default=False, required=False)
+    parser.add_argument("--ma_type", help="moving average calculation type", type=str, default='linear', choices=['linear', 'avg'], required=False)
     args = parser.parse_args()
     return args
 
@@ -133,7 +138,7 @@ def main():
     df = fetch_all_ticker_data(all_tickers)
 
     # PAA1 strategy:
-    L = 13  # Lookback length (month)
+    L = 12  # Lookback length (month)
     A = args.protection_range   # Protection range (0: low, 1: medium, 2: high)
     N = len(risky)  # Universum
     TOP = 6  # Number of assets in rotation
@@ -145,10 +150,11 @@ def main():
             ticker_data = df[t].copy(deep=True)
             cleaned_data = cleanup_ticker_data(ticker_data, L)
 
-            sma = SMA(cleaned_data, L)  # TBD: not sure if I am doing that correctly. Do I need 13 points for SMA12? Should I include p0 to SMA calculation?
-            print("{} : sma {}\n{}".format(t, sma, cleaned_data))
+            sma = SMA(cleaned_data, L, args.ma_type)  # TBD: not sure if I am doing that correctly. Do I need 13 points for SMA12? Should I include p0 to SMA calculation?
+            #print("{} : sma {}\n{}".format(t, sma, cleaned_data))
             last_price = cleaned_data.tail(1).iloc[0]["Close"]
             momentum = MOM(last_price, sma)
+            #print("Last price: {}\tmomentum: {}".format(last_price, momentum))
             ticker_mom[t] = momentum
         except Exception as e:
             print("ERR processing ticket '{}'\n{}".format(t, e))
@@ -170,7 +176,7 @@ def main():
     print_sorted_mom_tickers(top)
 
     bf = BF(N, positive_momentum_assets, A)
-    risky_asset_share = (1.0 - bf) / TOP
+    risky_asset_share = (1.0 - bf) / len(top) # Mix the risky EW portfolio with the bond part in a (1-BF)/BF fashion
     print("\nShare of each risky asset: ", round(risky_asset_share, 3))
     risky_target = round(args.amount * risky_asset_share, 1)
 

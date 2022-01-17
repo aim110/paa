@@ -37,13 +37,18 @@ def get_month(row):
     return str(row["Day"])[:7]
 
 
-def fetch_all_ticker_data(tickers):
+def fetch_all_ticker_data(tickers, include_today=False):
     today = date.today()
     if today.month == 1:
         start = date(year=today.year - 2, month=12, day=1)
     else:
         start = date(year=today.year - 1, month=today.month - 1, day=1)
-    end = date(year=today.year, month=today.month, day=1)
+
+    if include_today:
+        end = today
+    else:
+        end = date(year=today.year, month=today.month, day=1)
+
     return yf.download(
         tickers,
         start=str(start),
@@ -153,6 +158,7 @@ def parse_args():
         choices=["linear", "avg"],
         required=False,
     )
+    parser.add_argument("--include_today", action="store_true", default=False, required=False)
     args = parser.parse_args()
     return args
 
@@ -169,7 +175,7 @@ def main():
     curr = set(curr_ticker_state.index)
 
     all_tickers = {*risky, *safe, *curr}
-    df = fetch_all_ticker_data(all_tickers)
+    df = fetch_all_ticker_data(all_tickers, args.include_today)
 
     # PAA1 strategy:
     L = 12  # Lookback length (month)

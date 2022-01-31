@@ -178,7 +178,7 @@ def main():
     df = fetch_all_ticker_data(all_tickers, args.include_today)
 
     # PAA1 strategy:
-    L = 12  # Lookback length (month)
+    L = 13  # Lookback length (month)
     A = args.protection_range  # Protection range (0: low, 1: medium, 2: high)
     N = len(risky)  # Universum
     TOP = 6  # Number of assets in rotation

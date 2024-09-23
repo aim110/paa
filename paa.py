@@ -29,7 +29,6 @@ def SMA(ticker_cleaned, L=12, ma_type="linear"):
             index=ticker_cleaned.index,
         )
 
-    print(weighted)
     return sum(weighted["Weight"] * weighted["Price"]) / sum(weighted["Weight"])
 
 
@@ -56,6 +55,7 @@ def fetch_all_ticker_data(tickers, include_today=False):
         interval="1d",
         group_by="ticker",
         auto_adjust=True,
+        progress=False,  # https://github.com/ranaroussi/yfinance/issues/266
     )
 
 
@@ -65,10 +65,13 @@ def get_ticker_info(t):
 
 def get_last_prices(tickers_list):
     data = yf.download(
-        tickers=tickers_list, period="3d", interval="5m"
-    )  # 3d - in case of weekend launch
+        tickers=tickers_list,
+        period="5d",   # 5d: in case you're running script on holidays
+        interval="1h",
+        progress=False,  # https://github.com/ranaroussi/yfinance/issues/266
+    )  
     tail = data.dropna().tail(1)["Close"]
-    return {ticker: tail[ticker][0] for ticker in tail}
+    return {ticker: tail.iloc[0][ticker] for ticker in tail}
 
 
 def cleanup_ticker_data(d, lookback):
@@ -138,14 +141,14 @@ def parse_args():
     parser.add_argument(
         "--amount",
         type=int,
-        help="calculate shares according to that amount of money",
+        help="amount of money you want to spend for new shares",
         required=True,
     )
     parser.add_argument(
         "--current_fn", type=str, help="csv files with current positions", required=True
     )
-    parser.add_argument("--risky", action="extend", nargs="+", type=str, required=True)
-    parser.add_argument("--safe", action="extend", nargs="+", type=str, required=True)
+    parser.add_argument("--risky", action="extend", nargs="+", type=str, help="space separated tickers for risky assets", required=True)
+    parser.add_argument("--safe", action="extend", nargs="+", type=str, help="space separated tickers for safe assets", required=True)
     parser.add_argument(
         "--protection_range", choices=[0, 1, 2], type=int, required=True
     )
@@ -184,6 +187,9 @@ def main():
     TOP = 6  # Number of assets in rotation
     # Paper strategy comparison: page 9
 
+    # 
+    # Calculate ticker momentum
+    #
     ticker_mom = {}
     for t in all_tickers:
         try:
@@ -193,46 +199,59 @@ def main():
             sma = SMA(
                 cleaned_data, L, args.ma_type
             )  # TBD: not sure if I am doing that correctly. Do I need 13 points for SMA12? Should I include p0 to SMA calculation?
-            # print("{} : sma {}\n{}".format(t, sma, cleaned_data))
+            if args.debug:
+                print("Ticker: {}\tsma: {}\tCleaned data:\n{}".format(t, sma, cleaned_data))
             last_price = cleaned_data.tail(1).iloc[0]["Close"]
             momentum = MOM(last_price, sma)
-            # print("Last price: {}\tmomentum: {}".format(last_price, momentum))
+
+            if args.debug:
+                print("Last price: {}\tmomentum: {}".format(last_price, momentum))
+
             ticker_mom[t] = momentum
         except Exception as e:
             print("ERR processing ticket '{}'\n{}".format(t, e))
 
     sorted_mom = sorted(ticker_mom.items(), key=lambda x: x[1])
-    print("\nAll tickers momentum:")
+
+    print("-------------------------------------")
+    print("| All tickers momentum")
+    print("-------------------------------------")
+    print("| {:10}| {:10}| {:10}".format("is risky", "ticker", "momentum"))
+    print("-------------------------------------")
     for t, mom in sorted_mom:
         extra = " " if t not in risky else "*"
-        print("{} {}: {}".format(extra, t, mom))
+        print("| {:10}| {:10}| {:10}".format(extra, t, round(mom, 3)))
+    print("\n")
 
+    # 
+    # Calc other value based on ticker momentum
+    #
     positive_momentum_assets = 0
     for t in risky:
         if ticker_mom[t] > 0:
             positive_momentum_assets += 1
-    print("\nPositive momentum cnt for paa risky: ", positive_momentum_assets)
 
     top = [(t, m) for t, m in sorted_mom if m > 0 and t in risky][-TOP:]
-    print("\nTop risky assets for PAA:")
-    print_sorted_mom_tickers(top)
 
     bf = BF(N, positive_momentum_assets, A)
     risky_asset_share = (1.0 - bf) / len(
         top
     )  # Mix the risky EW portfolio with the bond part in a (1-BF)/BF fashion
-    print("\nShare of each risky asset: ", round(risky_asset_share, 3))
     risky_target = round(args.amount * risky_asset_share, 1)
 
-    print("\nBond fraction: ", round(bf, 3))
 
-    print("\nSafe assets momentum:")
-    print_sorted_mom_filtered(safe, sorted_mom)
-    print("Buy best safe asset on: {}$".format(round(args.amount * bf, 1)))
     top_safe = [t for t, m in sorted_mom if t in safe][-1]
-    safe_target = round(args.amount * bf, 1)
+    safe_target = args.amount * bf
 
-    if args.amount:
+    print("Important values of algorithm:")
+    print("\tPositive momentum cnt for paa risky: ", positive_momentum_assets)
+    print("\tShare of each risky asset: ", round(risky_asset_share, 3))
+    print("\tBond fraction: ", round(bf, 3))
+    print("\tBuy best safe asset on:  {}$".format(round(safe_target, 1)))
+    print("\tBuy best risky asset on: {}$".format(round(args.amount - safe_target, 1)))
+    print("\n")
+
+    if args.amount:  # calc amount of shares to buy/sell
         risky_top = [t for t, _ in top]
         # targets = {**{top_safe: safe_target}, **{t: risky_target for t in risky_top}}
         targets = defaultdict(int)
@@ -249,11 +268,12 @@ def main():
 
         orders = prepare_orders(curr_ticker_state, targets, last_price)
         ticker_info = yf.Tickers(" ".join(all_tickers))
-        get_info = lambda x: ticker_info.tickers[x].info["longName"]
+        get_info = lambda x: ticker_info.tickers[x].info.get("longName")
 
+        print("Buy/sell instructions for amount of shares for given tickets:")
         for ot, ticker, amount in sorted(orders, key=lambda x: x[0]):
             val = round(amount, 1) if type(amount) != str else amount
-            print("\t{}\t{}\t{}\t{}".format(ot.upper(), ticker, val, get_info(ticker)))
+            print("\t{:5}\t{:5}\t{:10}\t{}".format(ot.upper(), ticker, val, get_info(ticker)))
 
 
 # TBD: check if SMA is working properly - check using TradingView or other financial charts
